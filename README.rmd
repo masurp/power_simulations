@@ -8,7 +8,7 @@ knitr::opts_chunk$set(
   fig.path = "figures/",
   out.width = "100%",
   fig.retina = 2,
-  echo = FALSE
+  echo = TRUE
 )
 ```
 
@@ -34,7 +34,7 @@ library(effectsize)
 First, we need to specify a function that simulates data that aligns with our assumptions. 
 Here is an example that simulates a 2x2 between-subject design. 
 
-```{r, fig.height=5, fig.width = 5.5}
+```{r, fig.height=5, fig.width = 6}
 # Function to simulate means 
 sim_data <- function(n = 1000, 
                      means = c(2.5, 2.75,  # a1b1, a2b1
@@ -160,7 +160,7 @@ head(df)
 
 We can now have a look at the results (e.g., by summarising the power or effect sizes across the different specifications). 
 
-```{r, message = F, warning = F, fig.height=6, fig.width = 12}
+```{r, message = F, warning = F, fig.height=5, fig.width = 10}
 # Power in each combination
 df %>%
   select(-contains("p"), -contains("es")) %>%
@@ -183,7 +183,7 @@ es %>%
   ggplot(aes(x = n, y = cohens_f, color = key)) +
   geom_point(alpha = .5, size = 1) +
   geom_smooth(se = F) +
-  facet_wrap(~sd, ncol = 2) +
+  facet_wrap(~sd, ncol = 3) +
   theme_bw() +
   labs(title = "Effect sizes",
        x = "sample size (n)",
@@ -201,7 +201,7 @@ df %>%
   select(-contains("p"), -contains("es")) %>%
   gather(key, value, -n, -sd) %>%
   group_by(n, sd, key) %>%
-  summarize(power = sum(value)) %>%
+  summarize(power = sum(value)/10) %>%
   ggplot(aes(x = n, y = power, color = key)) +
   geom_smooth(se = F) +
   geom_point() +
