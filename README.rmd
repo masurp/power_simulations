@@ -1,0 +1,219 @@
+---
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  fig.path = "figures/",
+  out.width = "100%",
+  fig.retina = 2,
+  echo = FALSE
+)
+```
+
+
+# Simulate power for 2x2 designs
+
+
+```{r, message = F, warning = F}
+library(tidyverse)
+library(MonteCarlo)
+library(effectsize)
+```
+
+1. Make assumptions about the mean differences and standard deviations
+
+2. Simulate data (e.g., 1000 times)
+
+3. Extract p-values and count times the effect becomes significant
+
+
+## Simulate data 
+
+First, we need to specify a function that simulates data that aligns with our assumptions. 
+Here is an example that simulates a 2x2 between-subject design. 
+
+```{r, fig.height=5, fig.width = 5.5}
+# Function to simulate means 
+sim_data <- function(n = 1000, 
+                     means = c(2.5, 2.75,  # a1b1, a2b1
+                               3,   4),   # a1b2, a2b2
+                     sd = 1) {
+  
+  # simulate data
+  dv <- rnorm(n, mean = means , sd = sd) %>% round(0)
+  iv1 <- rep(c("a1", "a2"),each = 1, n/2)
+  iv2 <- rep(c("b1", "b2"), each = 2, n/4)
+  d <-data.frame(dv, iv1, iv2)
+  return(d)
+}
+
+# Check data simulation
+sim_data() %>%
+  group_by(iv1, iv2) %>%
+  summarise(m = mean(dv)) %>%
+  ggplot(aes(x = factor(iv1), y = m, color = iv2, group = iv2)) +
+  geom_point() +
+  geom_line() +
+  ylim(1, 5) +
+  theme_bw() +
+  labs(y = "dv", x = "iv1")
+
+```
+
+## Prepare and run simulation
+
+Next, we create a function that simulates the data, fits the models, extracts p-values, significance (based on p < .05), and the effect size.
+
+```{r}
+# Simulation function
+sim_func <- function(n = 600, 
+                     means = c(2.5, 2.75,  
+                               3,   4),
+                     sd = 1.5) {
+  
+  # simulate data
+  d <- sim_data(n = n, mean = means, sd = sd) # using the function from above
+  
+  # Fit models
+  fit1 <- lm(dv ~ iv1, d)
+  fit2 <- lm(dv ~ iv2, d)
+  fit3 <- lm(dv ~ iv1*iv2, d)
+  
+  # extract p-values and compute significance
+  p_1 <- summary(fit1)$coef[2,4]
+  sig_1 <- ifelse(p_1 < .05, TRUE, FALSE)
+  p_2 <- summary(fit2)$coef[2,4]
+  sig_2 <- ifelse(p_2 < .05, TRUE, FALSE)
+  p_3 <- summary(fit3)$coef[4,4]
+  sig_3 <- ifelse(p_3 < .05, TRUE, FALSE)
+  
+  # extract effect size
+  es_1 <- cohens_f(fit1, verbose = F) %>% 
+    as.data.frame() %>%
+    select(Cohens_f) %>%
+    as.numeric
+  es_2 <- cohens_f(fit2, verbose = F) %>% 
+    as.data.frame() %>%
+    select(Cohens_f) %>%
+    as.numeric
+  es_3 <- cohens_f(fit3, verbose = F) %>% 
+    as.data.frame() %>%
+    filter(Parameter == "iv1:iv2") %>%
+    select(Cohens_f_partial) %>%
+    as.numeric
+
+
+  # return values as list
+  return(list("p_1" = p_1,
+              "sig_1" = sig_1,
+              "p_2" = p_2,
+              "sig_2" = sig_2,
+              "p_3" = p_3,
+              "sig_3" = sig_3,
+              "es_1" = es_1,
+              "es_2" = es_2,
+              "es_3" = es_3))
+}
+
+# check
+sim_func()
+
+```
+
+# Specify simulation parameters
+
+Now, we create a list that how the parameters, in this cases the sample size and the standard devations, should vary.
+
+```{r}
+n_grid <- seq(100, 1000, 40) 
+sd_grid <- c(1, 1.5, 2) 
+
+# Collect simulation parameters in list
+(param_list <- list("n" = n_grid,
+                    "sd" = sd_grid))
+```
+
+# Run simulation
+
+Now, we can run the actual simulation. Here, we use 1.000 runs per combination (this may take a bit)
+
+```{r, message = F, warning = F, results = "hide"}
+result <- MonteCarlo(func = sim_func,             # pass test function
+                     nrep = 1000,                 # number of tests
+                     ncpus = 1,                   # number of cores to be used
+                     param_list = param_list)     # provide parameters
+```
+
+
+```{r, message = F, warning = F}
+# Create result data frame
+df <- MakeFrame(result)
+head(df)
+```
+
+
+# Results
+
+## Summary
+
+We can now have a look at the results (e.g., by summarising the power or effect sizes across the different specifications). 
+
+```{r, message = F, warning = F, fig.height=6, fig.width = 12}
+# Power in each combination
+df %>%
+  select(-contains("p"), -contains("es")) %>%
+  gather(key, value, -n, -sd) %>%
+  group_by(n, sd, key) %>%
+  summarize(power = sum(value))
+
+# Average effect size in each combination
+(es <- df %>%
+  select(-contains("p"), -contains("sig")) %>%
+  gather(key, value, -n, -sd) %>%
+  group_by(n, sd, key) %>%
+  summarize(cohens_f = mean(value),
+            se = psych::describe(value)$se,
+            ll = cohens_f - 1.96*se,
+            ul = cohens_f + 1.96*se))
+
+# Plot effect sizes
+es %>%
+  ggplot(aes(x = n, y = cohens_f, color = key)) +
+  geom_point(alpha = .5, size = 1) +
+  geom_smooth(se = F) +
+  facet_wrap(~sd, ncol = 2) +
+  theme_bw() +
+  labs(title = "Effect sizes",
+       x = "sample size (n)",
+       y = "effect size (cohen's f)",
+       color = "Type of effect",
+       caption = "Note: facets represent different standard deviations")
+```
+
+## Plot power curves
+
+Most importantly, we can plot so-called power curves that tell us how much power we achieve (on average) for each specification. This helps to decide for an appropriate sample size. 
+
+```{r, message = F, warning = F, fig.height=6, fig.width = 12}
+df %>%
+  select(-contains("p"), -contains("es")) %>%
+  gather(key, value, -n, -sd) %>%
+  group_by(n, sd, key) %>%
+  summarize(power = sum(value)) %>%
+  ggplot(aes(x = n, y = power, color = key)) +
+  geom_smooth(se = F) +
+  geom_point() +
+  geom_hline(yintercept = 80, linetype = "dashed") +
+  geom_hline(yintercept = 95, linetype = "dashed") +
+  facet_wrap(~sd) +
+  theme_bw() +
+  labs(title = "Power Curves",
+       x = "sample size (n)", 
+       y = "power (1-beta)", 
+       color = "type of effect",
+       caption = "Note: facets represent different standard deviations")
+
+```
+
